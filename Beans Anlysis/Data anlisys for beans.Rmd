@@ -1,0 +1,3187 @@
+---
+title: 'Beans analysis '
+author: "Andrea Isaia"
+date: "`r format(Sys.Date(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    keep_tex: true
+    toc: true
+    toc_depth: 3
+    number_sections: true
+  word_document:
+    toc: true
+    toc_depth: '3'
+fontsize: 12pt
+
+
+---
+# Introduction
+The dataset is called Bean dataset. This dataset is useful to analyze the different types of beans depending on their geometrical characteristics.
+The dataset can be downloaded on this site: \url{https://www.kaggle.com/datasets/sansuthi/dry-bean-dataset}.
+Our purpose is to try to create different clusters in which each bean should belongs. The single cluster is described by specific property that we will see during the analysis.
+
+There is a reduction on the original dataset: We only take at random 672 measures of the original 13612 and only 13 features of the original 17. 
+
+# Description of the dataset
+
+We first analyze the dataset using different functions in R.
+```{r, width = 60}
+Beans <- read.csv("C:/Users/Andrea/Desktop/Bean analysis/Data/Dry_Beans.csv",
+                  header = TRUE)
+str(Beans)
+```
+There are 13 features. In particular:
+
+* 10 are represented by real numbers:
+
+  + \textbf{Perimeter}: Bean circumference is defined as the length of its border.
+  + \textbf{MajorAxisLength}:  The distance between the ends of the longest line that can be drawn from a bean.
+  + \textbf{MinorAxisLength}: The longest line that can be drawn from the bean while standing perpendicular to the main axis.
+  + \textbf{AspectRation}: Defines the relationship between MajorAxisLength and MinorAxisLength
+  + \textbf{Eccentricity}: Eccentricity of the ellipse having the same moments as the region.
+  + \textbf{Equivalent diameter}: The diameter of a circle having the same Perimeter as a bean seed area.
+  + \textbf{Extent} : The ratio between Area and the Bounding Box(the minimal rectangle that contains it) in pixel measurement.
+  + \textbf{Solidity} : Also known as convexity. The ratio of the pixels in the area of the beans and convex area.
+  + \textbf{Roundness} : Calculated with the following formula: (4piArea)/(Perimeter^2)
+  + \textbf{Compactness} : Measures the roundness of an object: Equivalentdiameter/MajorAxisLength
+  
+  
+* 2 are represented by integer numbers:
+    + \textbf{Area} : The area of a bean zone and the number of pixels within its boundaries.
+    + \textbf{ConvexArea}: Number of pixels in the smallest convex polygon that can contain the area of a bean seed.
+    
+    
+* 1 is represented by strings:
+   + \textbf{Class} (Seker, Barbunya, Bombay, Cali, Dermosan, Horoz and Sira). This represent the different family of the beans. This column in particular will be excluded during the analysis and used as a comparison at the end with the found cluster.
+
+
+# Library used during the analysis
+
+```{r setup, message=FALSE, warning=FALSE}
+library("moments") # Useful to evaluate kurtosis and skewness
+library("gamlss") 
+library("gamlss.mx")
+library("ggcorrplot") # Useful for doing correlation 
+library("factoextra") # Useful for doing cluster analysis
+library("clustertend")
+library("hclust1d") 
+library("gridExtra") # Useful to have a grid of different factorextra method
+library("NbClust") # Useful to evaluate the number of clsuters 
+library("cluster") # Useful for pam algorithm inside fviz_nbclust
+library("fpc") # Useful for the clustering validation
+library("clValid") # Useful for the internal validation and clustering
+                  # stability measueres
+library("fclust") # Useful for the k-means algorithm
+library("mclust") # Useful for the mixture model
+```
+
+
+# Univariate analysis
+To do the univariate analysis first of all we attach the data, so we can deal with the different features of the data.
+
+```{r}
+attach(Beans)
+```
+
+## Area 
+
+```{r}
+summary(Area)
+V<- var(Area)
+cat("Variance : ",V,"\n")
+Sd <- sd(Area)
+cat("Standard deviation : ",Sd,"\n")
+Area.table <- table(Area)
+mode <- names(Area.table)[which.max(Area.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Area)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Area)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Area,main="Box plot of Area")
+
+out <- length(box$out)/length(Area)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+
+```{r}
+barplot(Area.table)
+```
+We can see from the bar plot that the data work as a continuous variable, not like an integer where values repeat multiple times. So in this case we treat all like a continuous variable.
+
+For the histogram we can use the Freedman-Diaconis method.
+The equation is:
+$$h = 2 \cdot \frac{IQR(x)}{\sqrt[3]{n}}$$
+Where IQR represent the difference between 1°Quantile and the 3° Quantile and n represent the number of data.
+```{r}
+hist(Area, 
+     breaks = "FD", 
+     main = "Histogram of the Area",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Area),col = "orange")
+```
+
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N1<- histDist(Area,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoA <- ppoints(length(Area))
+mu <- Log.N1$mu.coefficients
+sigma <- exp(Log.N1$sigma.coefficients)
+Log.N1.Theoretical <- qLOGNO(theoA ,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N1.Theoretical,y = Area, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+But why:
+```{r}
+sigma <- exp(Log.N1$sigma.coefficients)
+cat("Function applied to sigma",Log.N1$sigma.link)
+```
+
+We can see that the link value is log. This means that the value obtained from the histDist function gives as the $log(\sigma)$ not the value it self. So we do the exponential. 
+
+Another important aspect is the usage of ppoints: this function generates a vector of probabilities in $[0,1]$, but given by the formula $\frac{i-0.5}{n}$ where i is the element and n the number of elements.
+This with the qLOG gives us the quantile for that probabilities. Then we do the Q-Q plot. 
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N1 <- histDist(Area,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+
+mu <- exp(Gamma.N1$mu.coefficients)
+sigma <- exp(Gamma.N1$sigma.coefficients)
+Gamma.N1.Theoretical <- qGA(theoA,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N1.Theoretical,y = Area, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N1 <- histDist(Area,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N1$mu.coefficients)
+sigma <- exp(Weibull.N1$sigma.coefficients)
+Weibull.N1.Theoretical <- qWEI(theoA,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N1.Theoretical,y = Area, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N1 <- histDist(Area,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N1$mu.coefficients)
+Exp.N1.Theoretical <- qEXP(theoA,mu= mu)
+
+qqplot(x = Exp.N1.Theoretical,y = Area, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N1 <- histDist(Area,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+Area.comp <- data.frame(AIC=c(Log.N1$aic,Gamma.N1$aic,Weibull.N1$aic,
+                              Exp.N1$aic,Ig.N1$aic),
+                       BIC = c(Log.N1$sbc,Gamma.N1$sbc,Weibull.N1$sbc,
+                               Exp.N1$sbc,Ig.N1$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+Area.comp <- Area.comp[order(Area.comp$AIC, decreasing = FALSE), ]
+Area.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Log-Normal distribution.
+
+## Perimeter
+
+```{r}
+summary(Perimeter)
+V<- var(Perimeter)
+cat("Variance : ",V,"\n")
+Sd <- sd(Perimeter)
+cat("Standard deviation : ",Sd,"\n")
+Perimeter.table <- table(Perimeter)
+mode <- names(Perimeter.table)[which.max(Perimeter.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Perimeter)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Perimeter)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Perimeter,main="Box plot of Perimeter")
+
+out <- length(box$out)/length(Perimeter)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(Perimeter, 
+     breaks = "FD", 
+     main = "Histogram of the Perimeter",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Perimeter),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N2 <- histDist(Perimeter,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoP <- ppoints(length(Perimeter))
+mu <- Log.N2$mu.coefficients
+sigma <- exp(Log.N2$sigma.coefficients)
+Log.N2.Theoretical <- qLOGNO(theoP ,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N2.Theoretical,y = Perimeter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N2 <- histDist(Perimeter,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N2$mu.coefficients)
+sigma <- exp(Gamma.N2$sigma.coefficients)
+Gamma.N2.Theoretical <- qGA(theoP,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N2.Theoretical,y = Perimeter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N2 <- histDist(Perimeter,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N2$mu.coefficients)
+sigma <- exp(Weibull.N2$sigma.coefficients)
+Weibull.N2.Theoretical <- qWEI(theoP,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N2.Theoretical,y = Perimeter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N2 <- histDist(Perimeter,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N2$mu.coefficients)
+Exp.N2.Theoretical <- qEXP(theoP,mu= mu)
+
+qqplot(x = Exp.N2.Theoretical,y = Perimeter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N2 <- histDist(Perimeter,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+Perimeter.comp <- data.frame(AIC=c(Log.N2$aic,Gamma.N2$aic,Weibull.N2$aic,
+                                   Exp.N2$aic,Ig.N2$aic),
+                       BIC = c(Log.N2$sbc,Gamma.N2$sbc,Weibull.N2$sbc,
+                               Exp.N2$sbc,Ig.N2$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+Perimeter.comp <- Perimeter.comp[order(Perimeter.comp$AIC, decreasing = FALSE), ]
+Perimeter.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Log-Normal distribution.
+
+## MajorAxisLength
+
+```{r}
+summary(MajorAxisLength)
+V<- var(MajorAxisLength)
+cat("Variance : ",V,"\n")
+Sd <- sd(MajorAxisLength)
+cat("Standard deviation : ",Sd,"\n")
+MajorAxisLength.table <- table(MajorAxisLength)
+mode <- names(MajorAxisLength.table)[which.max(MajorAxisLength.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(MajorAxisLength)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(MajorAxisLength)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(MajorAxisLength,main="Box plot of MajorAxisaLength")
+
+out <- length(box$out)/length(MajorAxisLength)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(MajorAxisLength, 
+     breaks = "FD", 
+     main = "Histogram of the MajorAxisLength",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(MajorAxisLength),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N3 <- histDist(MajorAxisLength,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoM <- ppoints(length(MajorAxisLength))
+mu <- Log.N3$mu.coefficients
+sigma <- exp(Log.N3$sigma.coefficients)
+Log.N3.Theoretical <- qLOGNO(theoM,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N3.Theoretical,y = MajorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N3 <- histDist(MajorAxisLength,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N3$mu.coefficients)
+sigma <- exp(Gamma.N3$sigma.coefficients)
+Gamma.N3.Theoretical <- qGA(theoM,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N3.Theoretical,y = MajorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N3 <- histDist(MajorAxisLength,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N3$mu.coefficients)
+sigma <- exp(Weibull.N3$sigma.coefficients)
+Weibull.N3.Theoretical <- qWEI(theoM,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N3.Theoretical,y = MajorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N3 <- histDist(MajorAxisLength,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N3$mu.coefficients)
+Exp.N3.Theoretical <- qEXP(theoM,mu= mu)
+
+qqplot(x = Exp.N3.Theoretical,y = MajorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N3 <- histDist(MajorAxisLength,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+MajorAxisLength.comp <- data.frame(AIC=c(Log.N3$aic,Gamma.N3$aic,Weibull.N3$aic,
+                                         Exp.N3$aic,Ig.N3$aic),
+                       BIC = c(Log.N3$sbc,Gamma.N3$sbc,Weibull.N3$sbc,
+                               Exp.N3$sbc,Ig.N3$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+MajorAxisLength.comp <- MajorAxisLength.comp[order(MajorAxisLength.comp$AIC, 
+                                                   decreasing = FALSE), ]
+MajorAxisLength.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Inverse Gaussian distribution.
+
+## MinorAxisLength
+
+```{r}
+summary(MinorAxisLength)
+V<- var(MinorAxisLength)
+cat("Variance : ",V,"\n")
+Sd <- sd(MinorAxisLength)
+cat("Standard deviation : ",Sd,"\n")
+MinorAxisLength.table <- table(MinorAxisLength)
+mode <- names(MinorAxisLength.table)[which.max(MinorAxisLength.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(MinorAxisLength)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(MinorAxisLength)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(MinorAxisLength,main="Box plot of MinorAxisLength")
+
+out <- length(box$out)/length(MinorAxisLength)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(MinorAxisLength, 
+     breaks = "FD", 
+     main = "Histogram of the MinorAxisLength",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(MinorAxisLength),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N4 <- histDist(MinorAxisLength,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theom <- ppoints(length(MinorAxisLength))
+mu <- Log.N4$mu.coefficients
+sigma <- exp(Log.N4$sigma.coefficients)
+Log.N4.Theoretical <- qLOGNO(theom,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N4.Theoretical,y = MinorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N4 <- histDist(MinorAxisLength,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N4$mu.coefficients)
+sigma <- exp(Gamma.N4$sigma.coefficients)
+Gamma.N4.Theoretical <- qGA(theom,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N4.Theoretical,y = MinorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N4 <- histDist(MinorAxisLength,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N4$mu.coefficients)
+sigma <- exp(Weibull.N4$sigma.coefficients)
+Weibull.N4.Theoretical <- qWEI(theom,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N4.Theoretical,y = MinorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N4 <- histDist(MinorAxisLength,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N4$mu.coefficients)
+Exp.N4.Theoretical <- qEXP(theom,mu= mu)
+
+qqplot(x = Exp.N4.Theoretical,y = MinorAxisLength, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N4 <- histDist(MinorAxisLength,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+MinorAxisLength.comp <- data.frame(AIC=c(Log.N4$aic,Gamma.N4$aic,Weibull.N4$aic,
+                                         Exp.N4$aic,Ig.N4$aic),
+                       BIC = c(Log.N4$sbc,Gamma.N4$sbc,Weibull.N4$sbc,
+                               Exp.N4$sbc,Ig.N4$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+MinorAxisLength.comp <- MinorAxisLength.comp[order(MinorAxisLength.comp$AIC, 
+                                                   decreasing = FALSE), ]
+MinorAxisLength.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Log-Normal distribution.
+
+## AspectRation
+
+
+```{r}
+summary(AspectRation)
+V<- var(AspectRation)
+cat("Variance : ",V,"\n")
+Sd <- sd(AspectRation)
+cat("Standard deviation : ",Sd,"\n")
+AspectRation.table <- table(AspectRation)
+mode <- names(AspectRation.table)[which.max(AspectRation.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(AspectRation)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(AspectRation)
+cat("Skewness : ",S,"\n")
+```
+
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(AspectRation,main="Box plot of AspectRation")
+
+out <- length(box$out)/length(AspectRation)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+ 
+```{r}
+hist(AspectRation, 
+     breaks = "FD", 
+     main = "Histogram of the AspectRation",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(AspectRation),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N5 <- histDist(AspectRation,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoAR <- ppoints(length(AspectRation))
+mu <- Log.N5$mu.coefficients
+sigma <- exp(Log.N5$sigma.coefficients)
+Log.N5.Theoretical <- qLOGNO(theoAR,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N5.Theoretical,y = AspectRation, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal \n distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N5 <- histDist(AspectRation,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N5$mu.coefficients)
+sigma <- exp(Gamma.N5$sigma.coefficients)
+Gamma.N5.Theoretical <- qGA(theoAR,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N5.Theoretical,y = AspectRation, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N5 <- histDist(AspectRation,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N5$mu.coefficients)
+sigma <- exp(Weibull.N5$sigma.coefficients)
+Weibull.N5.Theoretical <- qWEI(theoAR,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N5.Theoretical,y = AspectRation, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N5 <- histDist(AspectRation,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N5$mu.coefficients)
+Exp.N5.Theoretical <- qEXP(theoAR,mu= mu)
+
+qqplot(x = Exp.N5.Theoretical,y = AspectRation, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+par(mfrow = c(1,2))
+Ig.N5 <- histDist(AspectRation,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian \n distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Ig.N5$mu.coefficients)
+sigma <- exp(Ig.N5$sigma.coefficients)
+Ig.N5.Theoretical <- rIG(theoAR,mu= mu, sigma = sigma)
+
+qqplot(x = Ig.N5.Theoretical,y = AspectRation, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nInverse Gaussian distribution")
+abline(a = 0, b=1,col="red")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Mixture model of Inverse Gaussian
+
+In this case we can try a mixture model of Inverse Gaussian, we can try three different inverse Gaussian because from the histogram we see three peaks.
+
+```{r,fig.show='hide'}
+set.seed(123) # We fix the seed because we always have different result
+              # due to the fact that the function gamlssMX start in
+              # a different point every time
+Mx.Ig <- gamlssMX(AspectRation ~ 1, 
+                    family = IG, 
+                    K = 3, 
+                    data = Beans)
+```
+
+```{r}
+# We extract from the model the parameters that we need
+
+weights <- Mx.Ig$prob  
+
+mu_vals <- exp(c(Mx.Ig$models[[1]]$mu.coefficients, 
+                 Mx.Ig$models[[2]]$mu.coefficients, 
+                 Mx.Ig$models[[3]]$mu.coefficients))
+
+sigma_vals <- exp(c(Mx.Ig$models[[1]]$sigma.coefficients, 
+                    Mx.Ig$models[[2]]$sigma.coefficients, 
+                    Mx.Ig$models[[3]]$sigma.coefficients))
+
+# Then we create the histogram 
+
+hist(AspectRation, 
+     breaks = "FD", 
+     main = "Mixture model of Inverse Gaussian",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+
+# we create a vector to represent the distribution
+
+x_seq <- seq(min(AspectRation), max(AspectRation), length.out = 1000)
+
+colors <- c("red", "blue", "green") 
+
+# In this cycle we create the respectively y value and plot
+# the each distribution
+
+for (i in 1:3) {
+  y_comp <- weights[i] * dIG(x_seq, mu = mu_vals[i], 
+                             sigma = sigma_vals[i])
+  lines(x_seq, y_comp, col = colors[i],
+        lwd = 2, lty = 2)
+}
+
+# Creates the total distribution 
+
+y_total <- (weights[1] * dIG(x_seq, mu = mu_vals[1], sigma = sigma_vals[1])) +
+           (weights[2] * dIG(x_seq, mu = mu_vals[2], sigma = sigma_vals[2])) +
+           (weights[3] * dIG(x_seq, mu = mu_vals[3], sigma = sigma_vals[3]))
+
+lines(x_seq, y_total, col = "black", lwd = 3)
+
+legend("topright", legend = c("Ig 1", "Ig 2", "Ig 3", "Total"),
+       col = c(colors, "black"), lwd = 2, lty = c(2,2,2,1))
+```
+
+
+
+### Comparison
+
+```{r}
+AspectRation.comp <- data.frame(AIC=c(Log.N5$aic,Gamma.N5$aic,Weibull.N5$aic,
+                                         Exp.N5$aic,Ig.N5$aic,
+                                      Mx.Ig$aic),
+                       BIC = c(Log.N5$sbc,Gamma.N5$sbc,Weibull.N5$sbc,
+                               Exp.N5$sbc,Ig.N5$sbc,
+                               Mx.Ig$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian",
+                                   "Mixed Inverse Gaussian"))
+AspectRation.comp <- AspectRation.comp[order(AspectRation.comp$AIC, 
+                                                   decreasing = FALSE), ]
+AspectRation.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Mixture Model of Inverse Gaussian distribution.
+
+## Eccentricity
+
+```{r}
+summary(Eccentricity)
+V<- var(Eccentricity)
+cat("Variance : ",V,"\n")
+Sd <- sd(Eccentricity)
+cat("Standard deviation : ",Sd,"\n")
+Eccentricity.table <- table(Eccentricity)
+mode <- names(Eccentricity.table)[which.max(Eccentricity.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Eccentricity)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Eccentricity)
+cat("Skewness : ",S,"\n")
+```
+
+The data are left-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Eccentricity,main="Box plot of Eccentricity")
+
+out <- length(box$out)/length(Area)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+ 
+```{r}
+hist(Eccentricity, 
+     breaks = "FD", 
+     main = "Histogram of the Eccentricity",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Eccentricity),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,1]$. So the distribution from which we could choose are:
+
++ \textbf{Beta}
++ \textbf{Simplex}
+
+### Beta
+
+```{r}
+par(mfrow = c(1,2))
+Beta.N1 <- histDist(y = Eccentricity, family = BE, nbins = "fd",
+                  main = "Beta distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoE <- ppoints(length(Eccentricity))
+mu <- plogis(Beta.N1$mu.coefficients)
+sigma <- plogis(Beta.N1$sigma.coefficients)
+Beta.N1.Theoretical <- qBE(theoE,mu= mu, sigma = sigma)
+
+qqplot(x = Beta.N1.Theoretical,y = Eccentricity, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nBeta distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Simplex
+
+```{r}
+par(mfrow = c(1,2))
+Sx.N2<- histDist(y = Eccentricity, family = SIMPLEX, nbins = "fd",
+                  main = "Simplex distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+mu <- plogis(Sx.N2$mu.coefficients)
+sigma <- exp(Sx.N2$sigma.coefficients)
+Sx.N2.Theoretical <- qSIMPLEX(theoE,mu= mu, sigma = sigma)
+
+qqplot(x = Sx.N2.Theoretical,y = Eccentricity, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nSimplex distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Comparison
+
+```{r}
+Eccentricity.comp <- data.frame(AIC=c(Beta.N1$aic,Sx.N2$aic),
+                       BIC = c(Beta.N1$sbc,Sx.N2$sbc),
+                       row.names=c("Beta","Simplex"))
+Eccentricity.comp <- Eccentricity.comp[order(Eccentricity.comp$AIC, 
+                                                   decreasing = FALSE), ]
+Eccentricity.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Simplex distribution.
+
+## ConvexArea
+
+```{r}
+summary(ConvexArea)
+V<- var(ConvexArea)
+cat("Variance : ",V,"\n")
+Sd <- sd(ConvexArea)
+cat("Standard deviation : ",Sd,"\n")
+ConvexArea.table <- table(ConvexArea)
+mode <- names(ConvexArea.table)[which.max(ConvexArea.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(ConvexArea)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(ConvexArea)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(ConvexArea,main="Box plot of ConvexArea")
+
+out <- length(box$out)/length(ConvexArea)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+
+```{r}
+barplot(ConvexArea.table)
+```
+We can see from the bar plot that the data work as a continuous variable, not like an integer where values repeat multiple times. So in this case we treat all like a continuous variable.
+
+```{r}
+hist(ConvexArea, 
+     breaks = "FD", 
+     main = "Histogram of the ConvexArea",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(ConvexArea),col = "orange")
+```
+
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N6 <- histDist(ConvexArea,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoCA <- ppoints(length(ConvexArea))
+mu <- Log.N6$mu.coefficients
+sigma <- exp(Log.N6$sigma.coefficients)
+Log.N6.Theoretical <- qLOGNO(theoCA,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N6.Theoretical,y = ConvexArea, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N6 <- histDist(ConvexArea,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N6$mu.coefficients)
+sigma <- exp(Gamma.N6$sigma.coefficients)
+Gamma.N6.Theoretical <- qGA(theoCA,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N6.Theoretical,y = ConvexArea, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N6 <- histDist(ConvexArea,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N6$mu.coefficients)
+sigma <- exp(Weibull.N6$sigma.coefficients)
+Weibull.N6.Theoretical <- qWEI(theoCA,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N6.Theoretical,y = ConvexArea, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N6 <- histDist(ConvexArea,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N6$mu.coefficients)
+Exp.N6.Theoretical <- qEXP(theoCA,mu= mu)
+
+qqplot(x = Exp.N6.Theoretical,y = ConvexArea, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N6 <- histDist(ConvexArea,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+ConvexArea.comp <- data.frame(AIC=c(Log.N6$aic,Gamma.N6$aic,Weibull.N6$aic,
+                              Exp.N6$aic,Ig.N6$aic),
+                       BIC = c(Log.N6$sbc,Gamma.N6$sbc,Weibull.N6$sbc,
+                               Exp.N6$sbc,Ig.N6$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+ConvexArea.comp <- ConvexArea.comp[order(ConvexArea.comp$AIC, decreasing = FALSE), ]
+ConvexArea.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Log-Normal distribution.
+
+## EquivDiameter
+
+
+```{r}
+summary(EquivDiameter)
+V<- var(EquivDiameter)
+cat("Variance : ",V,"\n")
+Sd <- sd(EquivDiameter)
+cat("Standard deviation : ",Sd,"\n")
+EquivDiameter.table <- table(EquivDiameter)
+mode <- names(EquivDiameter.table)[which.max(EquivDiameter.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(EquivDiameter)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(EquivDiameter)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(EquivDiameter,main="Box plot of EquivDiameter")
+
+out <- length(box$out)/length(EquivDiameter)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(EquivDiameter, 
+     breaks = "FD", 
+     main = "Histogram of the EquivDiameter",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(EquivDiameter),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,+Inf[$. So the distribution from which we could choose are:
+
++ \textbf{Log-Normal}
++ \textbf{Gamma}
++ \textbf{Weibull}
++ \textbf{Exponential}
++ \textbf{Inverse Gaussian}
+
+### Log-Normal
+
+```{r}
+par(mfrow = c(1,2))
+Log.N7 <- histDist(EquivDiameter,family = LOGNO,nbins = "fd",
+                  main = "Log-Normal distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoED <- ppoints(length(EquivDiameter))
+mu <- Log.N7$mu.coefficients
+sigma <- exp(Log.N7$sigma.coefficients)
+Log.N7.Theoretical <- qLOGNO(theoED,mu= mu, sigma = sigma)
+
+qqplot(x = Log.N7.Theoretical,y = EquivDiameter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nLog-Normal distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Gamma
+
+```{r}
+par(mfrow = c(1,2))
+Gamma.N7 <- histDist(EquivDiameter,family = GA ,nbins = "fd",
+                  main = "Gamma distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Gamma.N7$mu.coefficients)
+sigma <- exp(Gamma.N7$sigma.coefficients)
+Gamma.N7.Theoretical <- qGA(theoED,mu= mu, sigma = sigma)
+
+qqplot(x = Gamma.N7.Theoretical,y = EquivDiameter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nGamma distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Weibull
+
+```{r}
+par(mfrow = c(1,2))
+Weibull.N7 <- histDist(EquivDiameter,family = WEI ,nbins = "fd",
+                  main = "Weibull distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Weibull.N7$mu.coefficients)
+sigma <- exp(Weibull.N7$sigma.coefficients)
+Weibull.N7.Theoretical <- qWEI(theoED,mu= mu, sigma = sigma)
+
+qqplot(x = Weibull.N7.Theoretical,y = EquivDiameter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nWeibull distribution")
+abline(a = 0, b=1,col="red")
+```
+
+### Exponential
+
+```{r}
+par(mfrow = c(1,2))
+Exp.N7 <- histDist(EquivDiameter,family = EXP ,nbins = "fd",
+                  main = "Exponential distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+mu <- exp(Exp.N7$mu.coefficients)
+Exp.N7.Theoretical <- qEXP(theoED,mu= mu)
+
+qqplot(x = Exp.N7.Theoretical,y = EquivDiameter, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nExp distribution")
+abline(a = 0, b=1,col="red")
+```
+
+
+### Inverse Gaussian
+
+```{r}
+Ig.N7 <- histDist(EquivDiameter,family = IG ,nbins = "fd",
+                  main = "Inverse Gaussian distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+```
+In this case we can't use the Q-Q plot, because the variance is given by $\sigma^2 \mu^3$, so R cannot generates easily value on that range.
+
+### Comparison
+
+```{r}
+EquivDiameter.comp <- data.frame(AIC=c(Log.N7$aic,Gamma.N7$aic,Weibull.N7$aic,
+                                         Exp.N7$aic,Ig.N7$aic),
+                       BIC = c(Log.N7$sbc,Gamma.N7$sbc,Weibull.N7$sbc,
+                               Exp.N7$sbc,Ig.N7$sbc),
+                       row.names=c("Log-Normal","Gamma","Weibull",
+                                    "Exponential","Inverse Gaussian"))
+EquivDiameter.comp <- EquivDiameter.comp[order(EquivDiameter.comp$AIC, 
+                                                   decreasing = FALSE), ]
+EquivDiameter.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Log-Normal distribution.
+
+## Extent
+
+
+```{r}
+summary(Extent)
+V<- var(Extent)
+cat("Variance : ",V,"\n")
+Sd <- sd(Extent)
+cat("Standard deviation : ",Sd,"\n")
+Extent.table <- table(Extent)
+mode <- names(Extent.table)[which.max(Extent.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Extent)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Extent)
+cat("Skewness : ",S,"\n")
+```
+The data are soft left-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Extent,main="Box plot of Extent")
+
+out <- length(box$out)/length(Extent)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(Extent, 
+     breaks = "FD", 
+     main = "Histogram of the Extent",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Extent),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,1]$. So the distribution from which we could choose are:
+
++ \textbf{Beta}
++ \textbf{Simplex}
+
+### Beta
+
+```{r}
+par(mfrow = c(1,2))
+Beta.N2 <- histDist(y = Extent, family = BE, nbins = "fd",
+                  main = "Beta distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoEx <- ppoints(length(Extent))
+mu <- plogis(Beta.N2$mu.coefficients)
+sigma <- plogis(Beta.N2$sigma.coefficients)
+Beta.N2.Theoretical <- qBE(theoEx,mu= mu, sigma = sigma)
+
+qqplot(x = Beta.N2.Theoretical,y = Extent, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nBeta distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Simplex
+
+```{r}
+par(mfrow = c(1,2))
+Sx.N2<- histDist(y = Extent, family = SIMPLEX, nbins = "fd",
+                  main = "Simplex distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+mu <- plogis(Sx.N2$mu.coefficients)
+sigma <- exp(Sx.N2$sigma.coefficients)
+Sx.N2.Theoretical <- qSIMPLEX(theoEx,mu= mu, sigma = sigma)
+
+qqplot(x = Sx.N2.Theoretical,y = Extent, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nSimplex distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Comparison
+
+```{r}
+Extent.comp <- data.frame(AIC=c(Beta.N2$aic,Sx.N2$aic),
+                       BIC = c(Beta.N2$sbc,Sx.N2$sbc),
+                       row.names=c("Beta","Simplex"))
+Extent.comp <- Extent.comp[order(Extent.comp$AIC, 
+                                                   decreasing = FALSE), ]
+Extent.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Simplex distribution.
+
+## Solidity
+
+
+```{r}
+summary(Solidity)
+V<- var(Solidity)
+cat("Variance : ",V,"\n")
+Sd <- sd(Solidity)
+cat("Standard deviation : ",Sd,"\n")
+Solidity.table <- table(Solidity)
+mode <- names(Solidity.table)[which.max(Solidity.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Solidity)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Solidity)
+cat("Skewness : ",S,"\n")
+```
+The data are left-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Solidity,main="Box plot of Solidity")
+
+out <- length(box$out)/length(Solidity)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(Solidity, 
+     breaks = "FD", 
+     main = "Histogram of the Solidity",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Solidity),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,1]$. So the distribution from which we could choose are:
+
++ \textbf{Beta}
++ \textbf{Simplex}
+
+### Beta
+
+```{r}
+par(mfrow = c(1,2))
+Beta.N3 <- histDist(y = Solidity, family = BE, nbins = "fd",
+                  main = "Beta distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoS <- ppoints(length(Solidity))
+mu <- plogis(Beta.N3$mu.coefficients)
+sigma <- plogis(Beta.N3$sigma.coefficients)
+Beta.N3.Theoretical <- qBE(theoS,mu= mu, sigma = sigma)
+
+qqplot(x = Beta.N3.Theoretical,y = Solidity, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nBeta distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Simplex
+
+```{r}
+par(mfrow = c(1,2))
+Sx.N3<- histDist(y = Solidity, family = SIMPLEX, nbins = "fd",
+                  main = "Simplex distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+mu <- plogis(Sx.N3$mu.coefficients)
+sigma <- exp(Sx.N3$sigma.coefficients)
+Sx.N3.Theoretical <- qSIMPLEX(theoS,mu= mu, sigma = sigma)
+
+qqplot(x = Sx.N3.Theoretical,y = Solidity, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nSimplex distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Comparison
+
+```{r}
+Solidity.comp <- data.frame(AIC=c(Beta.N3$aic,Sx.N3$aic),
+                       BIC = c(Beta.N3$sbc,Sx.N3$sbc),
+                       row.names=c("Beta","Simplex"))
+Solidity.comp <- Solidity.comp[order(Solidity.comp$AIC, 
+                                                   decreasing = FALSE), ]
+Solidity.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Simplex distribution.
+
+## Roundness
+
+
+```{r}
+summary(roundness)
+V<- var(roundness)
+cat("Variance : ",V,"\n")
+Sd <- sd(roundness)
+cat("Standard deviation : ",Sd,"\n")
+roundness.table <- table(roundness)
+mode <- names(roundness.table)[which.max(roundness.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(roundness)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(roundness)
+cat("Skewness : ",S,"\n")
+```
+The data are soft left-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(roundness,main="Box plot of roundness")
+
+out <- length(box$out)/length(roundness)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(roundness, 
+     breaks = "FD", 
+     main = "Histogram of the roundness",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(roundness),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,1]$. So the distribution from which we could choose are:
+
++ \textbf{Beta}
++ \textbf{Simplex}
+
+### Beta
+
+```{r}
+par(mfrow = c(1,2))
+Beta.N4 <- histDist(y = roundness, family = BE, nbins = "fd",
+                  main = "Beta distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoR <- ppoints(length(roundness))
+mu <- plogis(Beta.N4$mu.coefficients)
+sigma <- plogis(Beta.N4$sigma.coefficients)
+Beta.N4.Theoretical <- qBE(theoR,mu= mu, sigma = sigma)
+
+qqplot(x = Beta.N4.Theoretical,y = roundness, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nBeta distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Simplex
+
+```{r}
+par(mfrow = c(1,2))
+Sx.N4<- histDist(y = roundness, family = SIMPLEX, nbins = "fd",
+                  main = "Simplex distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+mu <- plogis(Sx.N4$mu.coefficients)
+sigma <- exp(Sx.N4$sigma.coefficients)
+Sx.N4.Theoretical <- qSIMPLEX(theoR,mu= mu, sigma = sigma)
+
+qqplot(x = Sx.N4.Theoretical,y = roundness, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nSimplex distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Comparison
+
+```{r}
+roundness.comp <- data.frame(AIC=c(Beta.N4$aic,Sx.N4$aic),
+                       BIC = c(Beta.N4$sbc,Sx.N4$sbc),
+                       row.names=c("Beta","Simplex"))
+roundness.comp <- roundness.comp[order(roundness.comp$AIC, 
+                                                   decreasing = FALSE), ]
+roundness.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Beta distribution.
+
+## Compactness
+
+
+```{r}
+summary(Compactness)
+V<- var(Compactness)
+cat("Variance : ",V,"\n")
+Sd <- sd(Compactness)
+cat("Standard deviation : ",Sd,"\n")
+Compactness.table <- table(Compactness)
+mode <- names(Compactness.table)[which.max(Compactness.table)]
+cat("Mode : ",mode,"\n")
+K <- kurtosis(Compactness)
+cat("Kurtosis : ",K,"\n")
+S <- skewness(Compactness)
+cat("Skewness : ",S,"\n")
+```
+The data are right-skewed, as observed from the skewness index. The high kurtosis indicates that the distribution is leptokurtic, meaning there is a great concentration of values around the mean, but also a high frequency of outliers that are far away from it.
+
+```{r}
+box <- boxplot(Compactness,main="Box plot of Compactness")
+
+out <- length(box$out)/length(Compactness)
+cat("Percentage of outliers : ",out*100,"%")
+
+```
+```{r}
+hist(Compactness, 
+     breaks = "FD", 
+     main = "Histogram of the Compactness",
+     col = "steelblue",
+     border = "white",
+     freq = FALSE)
+lines(density(Compactness),col = "orange")
+```
+Now we can try to fit different models to the data. First of all we observe that the support of the data is $[0,1]$. So the distribution from which we could choose are:
+
++ \textbf{Beta}
++ \textbf{Simplex}
+
+### Beta
+
+```{r}
+par(mfrow = c(1,2))
+Beta.N5 <- histDist(y = Compactness, family = BE, nbins = "fd",
+                  main = "Beta distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+
+theoC <- ppoints(length(Compactness))
+mu <- plogis(Beta.N5$mu.coefficients)
+sigma <- plogis(Beta.N5$sigma.coefficients)
+Beta.N5.Theoretical <- qBE(theoC,mu= mu, sigma = sigma)
+
+qqplot(x = Beta.N5.Theoretical,y = Compactness, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nBeta distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Simplex
+
+```{r}
+par(mfrow = c(1,2))
+Sx.N5<- histDist(y = Compactness, family = SIMPLEX, nbins = "fd",
+                  main = "Simplex distribution",
+                  col.hist="blue",border.hist="orange",line.col = "red"
+                  ,ylab = "Density")
+mu <- plogis(Sx.N5$mu.coefficients)
+sigma <- exp(Sx.N5$sigma.coefficients)
+Sx.N5.Theoretical <- qSIMPLEX(theoC,mu= mu, sigma = sigma)
+
+qqplot(x = Sx.N5.Theoretical,y = Compactness, 
+       xlab = "Theoretical distribution", 
+       main="Q-Q plot\nSimplex distribution")
+abline(a = 0, b=1,col="red")
+
+```
+
+### Comparison
+
+```{r}
+Compactness.comp <- data.frame(AIC=c(Beta.N5$aic,Sx.N5$aic),
+                       BIC = c(Beta.N5$sbc,Sx.N5$sbc),
+                       row.names=c("Beta","Simplex"))
+Compactness.comp <- Compactness.comp[order(Compactness.comp$AIC, 
+                                                   decreasing = FALSE), ]
+Compactness.comp
+```
+From the AIC and BIC criteria the better model that fits the data in terms of parsimony and accuracy is the Beta distribution.
+
+## Class
+
+```{r}
+summary(Class)
+```
+```{r}
+cat("Frequency")
+table(Class)
+frequency <- prop.table(table(Class))*100
+cat("Percentage frequency\n")
+frequency
+```
+```{r}
+barplot(table(Class)/length(Class),space = 0.3,
+        col = c("blue","red","yellow","black","purple",
+                "green","orange"),
+        main="Type of bean Percentage",
+        xlab="Family bean",
+        ylab="Percentage frequency",
+        names.arg = c("Barbunya","Bombay",
+                      "Cali","Dermason",
+                      "Horoz","Seker",
+                      "Sira"))
+```
+
+
+
+
+
+
+
+
+
+
+
+# PCA
+
+## Correlation
+Before doing our analysis for the PCA approach we first of all analyze the correlation of the data.
+First of all we erase the class feature from the analysis, we will use it later in the clustering.
+
+```{r}
+Beans.w.c <- Beans[,1:12]
+```
+
+
+We know from the description of the data that some features are correlated with others, for example Roundness is a ratio between the Area and the Perimeter.
+To emphasize the correlation between variables we use the function cor, but specifying the method "Spearman". This is different from the common Pearson, because is not parametric and it is used for variables that are not normally distributed and whene the correlation is possibly linear or not.
+
+```{r}
+Beans.corr <- cor(Beans.w.c,method = "spearman")
+Beans.corr
+```
+```{r}
+ggcorrplot(Beans.corr, lab = TRUE, method = "square",
+           lab_size = 3)
+```
+
+It's interesting to notice that the geometrical measure are positive corralated between them, but they are negatively or not correlated to the derived quantity.
+
+## PCA
+
+First of we can see the variance of the data
+```{r}
+Variance <- apply(Beans.w.c,2,var)
+Variance
+```
+We can see that there are bigger value like the variance of the Area and smaller value like Solidity. For this reason we first standardize the data.
+
+```{r}
+std.Beans <- apply(Beans.w.c,2,scale) 
+head(std.Beans)
+```
+Then we can perform the eigenvalues of the covariance matrix.
+
+```{r}
+Beans.cov <- cov(std.Beans)
+Beans.eigen <- eigen(Beans.cov)
+
+# Renaming rows and columns
+colnames(Beans.eigen$vectors) <- paste("PC",1:ncol(Beans.eigen$vectors),sep="")
+rownames(Beans.eigen$vectors) <- colnames(Beans.w.c)
+
+Beans.PCs <- Beans.eigen$vectors
+
+Beans.PCs
+
+
+```
+We can see that the PC1 is highly correlated to the geometrical features of a bean, instead the PC2 is negative correlated to al the features except for AspectRation and Eccentricity. The PC3 is highly correlated to Solidity and positive correlated to extend and roundness.
+
+First of all we choose the number of principal components using three methods:
+
++ \textbf{Cumulative proportion of variance explained}
++ \textbf{Kaiser's rule}
++ \textbf{Scree plot}
+
+### Cumulative proportion of variance explained
+
+```{r}
+CPVE <- 0
+d <- length(Beans.eigen$values)
+n.comp <- 0 
+PVE <- numeric(d)
+
+for (i in 1:d){
+   PVE[i] <-  Beans.eigen$values[i]/d
+   CPVE <- CPVE + Beans.eigen$values[i]
+   
+   if (CPVE/d <= 0.8) n.comp <- n.comp+1
+}
+
+cat("Number of components are the first: ",n.comp+1)
+
+
+```
+### Kaiser's rule
+
+```{r}
+n.comp.K <- 0
+mean.lambda <- mean(Beans.eigen$values)
+for (i in 1:d){
+  if (Beans.eigen$values[i] > mean.lambda)
+    n.comp.K <- n.comp.K +1
+  else
+    break
+}
+
+cat("Number of components are the first: ",n.comp.K)
+```
+### Scree plot
+
+```{r}
+par(mfrow=c(2,2))
+
+plot(seq(from = 1,to = d, by = 1),Beans.eigen$values,xlab = "PCs",
+     ylab = "Eigenvalues",type = "o",
+     lty = 1,col="red")
+plot(seq(from = 1,to = d, by = 1),PVE,xlab = "PCs",
+     ylab = "PVE",type = "o",
+     lty = 1,col="blue")
+plot(seq(from = 1,to = d, by = 1),cumsum(PVE),xlab = "PCs",
+     ylab = "CPVE",type = "o",
+     lty = 1,col="orange")
+```
+We can see that the elbow occur at the third component, so in this case we take only two components.
+
+## PCs plot
+Following from the fact that the majority of the methods say that is better 2 PCs, then we represent all in a 2-D dimensional space given by the first two eigenvectors.
+
+```{r, warning = FALSE, message = FALSE}
+# We can do the biplot only using prcomp for the PCA, the result is the same.
+pca <- prcomp(std.Beans,  scale = TRUE)
+fviz_pca_biplot(pca,label = "var",repel = TRUE)
+```
+In the graph we can see the dependency that we have shown in the correlation matrix. The first PC explain the 56% of the variability of the data and the second PC the 26.6%.
+
+
+
+
+
+
+
+
+
+
+
+
+# Multivariate analysis : Cluster analysis
+
+## Clustering tendency
+
+We first analyze our data to establish if they can be clustered or not. This is done by comparing our data to random generated data.
+
+```{r}
+# Generates data randomly based and Beans.w.c based on columns (the 2 inside apply).
+random.data <- apply(Beans.w.c,2,
+                     function(x){runif(length(x),min(x),max(x))})
+
+
+random.data <- as.data.frame(random.data)
+std.random.data <- scale(random.data)
+```
+
+We can plot for both the pair plot.
+
+```{r}
+pairs(std.Beans,gap = 0,pch =16) 
+```
+We can see that in different rectangles there are possible clusters, for example in Compactness-MinorAxisLength. In other we can see a correlation instead of a cluster, for example ConvexArea and EquivDiameter.
+```{r}
+pairs(std.random.data,gap=0,pch=16)
+```
+In this case is not evident a clustering division of the data, but only a big clustering that contains all the data in a rectangle.
+
+```{r}
+fviz_pca_ind(pca, title = "PCA-Beans",habillage = Beans$Class,
+             palette = c("blue","red","yellow","black","purple",
+                "green","orange"),
+             geom = "point", legend = "bottom" )
+```
+We can see a clustering tendency in the data. Remember that this graph is made by using the specific class contained in the Beans dataset.
+
+```{r}
+fviz_pca_ind(prcomp(std.random.data), title = "PCA-Random Data",
+             geom = "point", legend = "bottom" )
+```
+Clearly there is not a clustering tendency.
+
+We now use two methods to evaluate the clustering tendency.
+
+### Hopkins statistic
+
+```{r, warning=FALSE}
+hopkins(std.Beans, n =nrow(Beans.w.c)-1)
+hopkins(std.random.data, n =nrow(Beans.w.c)-1)
+```
+As we can see the statistic for the Beans dataset is near the zero, so they can be clustered.
+In the case of random variable, they cannot be clustered because the value is near $0.5$.
+
+### VAT Algorithm
+
+First we crate the dissimilarity matrix of both the data, the features are all numerical and continuous, so we can use the function dist to compute the dissimilarity matrix. We use the euclidean distance.
+```{r}
+Beans.diss <- dist(std.Beans)
+Random.diss <- dist(std.random.data)
+```
+
+Then we create the two different plots and compare them.
+```{r, warning=FALSE}
+par(mfrow=c(1,2))
+fviz_dist(Beans.diss, show_labels = FALSE)+ labs(title="Beans dataset")
+
+fviz_dist(Random.diss, show_labels = FALSE)+labs(title="Uniform Random dataset")
+
+
+```
+
+
+We can see that there are different rectangles on the diagonal in the graph of the dataset, instead in the random uniform dataset we can see no rectangles. All the previous methods demonstrate that the data has some clustering tendency.
+
+## Hierarchial clustering
+
+The hierarchical agglomerative clustering is a method that starts from the single unit considered as clusters and then "goes up", in other words merge them together to for a bigger cluster until all the units are in a single big cluster.
+The procedure depends on two factor:
+
++ The \textbf{dissimilarity measure} used for the dissimilarity matrix (In our case the Euclidean distance and the Manhattan distance)
+
++ The \textbf{linkage method} that we will use to merge two different clusters (In our case we can use single linkage method, complete linkage method, average linkage method, centroid linkage method and ward's method. The last two method can be used only because all the features are numerical)
+
+The structure of the analysis is as follow:
+ 1. Doing the hierarchical algorithm
+ 2. Doing the correlation between the dissimilarity matrix and the cophenetic distance to see if the clustering is valid. If It's a value close to 1, it's a good tree.
+ 3. Evaluating the optimal number of cluster doing the average silhouette width, the gap statistics and the WSS analysis.
+ 4. Computing the internal validation through the analysis of the silhouette width, connectivity and Dunn index.
+ 5. Computing the external validation of the data through Rand index and  Meila's index. The first measures the agreement and the second the disagreement with the Classes.
+
+### Euclidean distance
+
+First of all we create the new dissimilarity matrix. (Remember to use standardized data)
+
+```{r,warning = FALSE, message = FALSE}
+Beans.eu <- dist(std.Beans, method = "euclidean")
+```
+
+#### Single linkage method
+
+.
+
+```{r, fig.align = "center",warning = FALSE, message = FALSE,out.width="85%"}
+Beans.hc.s.e <- hclust(Beans.eu, method = "single")
+fviz_dend(Beans.hc.s.e, main = "Single linkage method",
+          show_labels = FALSE)        # show_labels = FALSE delete the 
+                                      # name of different beans
+```
+
+
+```{r}
+corr.s.e <- cor(Beans.eu,cophenetic(Beans.hc.s.e))
+corr.s.e 
+```
+
+
+
+```{r}
+
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "euclidean"
+             ,hc_method = "single") + 
+  geom_vline(xintercept = 3, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "euclidean" 
+             ,hc_method = "single")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "euclidean"
+             ,hc_method = "single", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+With this method 3 is the optimal number of clusters.
+
+We can now perform the Internal validation.
+
+```{r}
+Beans.e.eu.s<-eclust(std.Beans, FUNcluster = "hclust",
+                       hc_metric = "euclidean", k = 3,
+                     hc_method = "single", graph = FALSE)
+
+fviz_dend(Beans.e.eu.s, show_labels=FALSE, horiz = TRUE,
+          palette = "jco",main = "Single linkage method")
+```
+```{r, warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.eu.s, ggtheme = theme_classic(),
+                palette = "jco", k= 3, main = "Single linkage method")
+```
+
+```{r}
+sil <- Beans.e.eu.s$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+
+```{r, warning = FALSE}
+val.e.h.s <- clValid(std.Beans, nClust = 2:7, 
+                     clMethods = "hierarchical", validation ="internal",
+                     method="single", maxitems = 1000)
+summary(val.e.h.s)
+
+
+```
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.eu.s$cluster)
+
+# Numeric counter part of classes
+
+classes <- as.numeric(as.factor(Beans$Class))
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes, 
+                             alt.clustering = Beans.e.eu.s$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+
+```
+
+The Rand index indicates a week agreement. The Meila's index indicates strong disagreement.
+
+We can try forcing the system to give us 7 clusters.
+
+```{r}
+Beans.e.eu.s7<-eclust(std.Beans, FUNcluster = "hclust",
+                       hc_metric = "euclidean", k = 7,
+                     hc_method = "single", graph = FALSE)
+
+fviz_dend(Beans.e.eu.s7, show_labels=FALSE, horiz = TRUE,
+          palette = "jco",main = "Single linkage method")
+```
+```{r, warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.eu.s7, ggtheme = theme_classic(),
+                palette = "jco", k= 3, main = "Single linkage method")
+```
+
+```{r}
+sil <- Beans.e.eu.s7$silinfo$widths[,1:3]
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+```{r, warning = FALSE}
+table(Beans$Class, Beans.e.eu.s7$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.s7$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+
+```
+Also in this case both the indices don't give a good result. 
+
+#### Complete linkage mathod
+.
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.c.e <- hclust(Beans.eu, method = "complete")
+fviz_dend(Beans.hc.c.e, main = "Complete linkage method",
+          show_labels = FALSE)
+```
+
+```{r}
+corr.c.e <- cor(Beans.eu,cophenetic(Beans.hc.c.e))
+corr.c.e 
+```
+```{r}
+
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "euclidean" 
+             ,hc_method = "complete") +
+  geom_vline(xintercept = 8, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "euclidean" 
+             ,hc_method = "complete")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "euclidean"
+             ,hc_method = "complete", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+The three different method gives us three different result. It's impossible to choose one based on these three method. In this case we will use 7 clusters as the number of classes.
+
+```{r}
+Beans.e.eu.c<-eclust(std.Beans, FUNcluster = "hclust",
+                     hc_metric = "euclidean", k = 7,
+                     hc_method = "complete", graph = FALSE)
+
+fviz_dend(Beans.e.eu.c, show_labels=FALSE, horiz = TRUE,
+          palette = "jco",main = "Complete linkage method")
+```
+
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.eu.c, ggtheme = theme_classic(),
+                palette = "jco",main = "Complete linkage method")
+```
+
+```{r}
+sil <- Beans.e.eu.c$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+val.e.h.c <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical", 
+                     validation ="internal", method="complete", 
+                     maxitems = 1000)
+summary(val.e.h.c)
+```
+
+We can now perform the external validation.
+
+
+```{r}
+table(Beans$Class, Beans.e.eu.c$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.c$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+
+```
+The Rand index indicates a week agreement. The Meila's index indicates strong disagreement.
+
+
+#### Average linkage method
+.
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.a.e <- hclust(Beans.eu, method = "average")
+fviz_dend(Beans.hc.a.e, main = "Average linkage method",
+          show_labels = FALSE)
+```
+
+```{r}
+corr.a.e <- cor(Beans.eu,cophenetic(Beans.hc.a.e))
+corr.a.e 
+```
+```{r}
+
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "euclidean" 
+             ,hc_method = "average") + 
+  geom_vline(xintercept = 4, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "euclidean" 
+             ,hc_method = "average")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "euclidean" 
+             ,hc_method = "average", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+The three different method gives us three different result. It's impossible to choose one based on these three method. In this case we will use 7 clusters as the number of classes.
+
+```{r}
+Beans.e.eu.al<-eclust(std.Beans, FUNcluster = "hclust", 
+                      hc_metric = "euclidean", k = 7, hc_method = "average",
+                      graph = FALSE)
+
+fviz_dend(Beans.e.eu.al, show_labels=FALSE, horiz = TRUE, palette = "jco",
+          main = "Average linkage method")
+```
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.eu.al, ggtheme = theme_classic(),
+                palette = "jco",main = "Average linkage method")
+```
+
+
+```{r}
+sil <- Beans.e.eu.al$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+val.e.h.al <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical", 
+                      validation ="internal", method="average",
+                      maxitems = 1000)
+summary(val.e.h.al)
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.eu.al$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.al$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a week agreement. The Meila's index indicates strong disagreement.
+
+#### Centroid linkage method
+.
+
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.ce.e <- hclust(Beans.eu, method = "centroid")
+fviz_dend(Beans.hc.ce.e, main = "Centroid linkage method",
+          show_labels = FALSE)
+```
+
+```{r}
+corr.ce.e <- cor(Beans.eu,cophenetic(Beans.hc.ce.e))
+corr.ce.e 
+```
+
+
+```{r}
+
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "euclidean"
+             ,hc_method = "centroid") +
+  geom_vline(xintercept = 2, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "euclidean" 
+             ,hc_method = "centroid")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "euclidean" 
+             ,hc_method = "centroid", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+With this methods 2 is the optimal number of clusters.
+
+```{r,warning = FALSE}
+Beans.e.eu.cl<-eclust(std.Beans, FUNcluster = "hclust", 
+                      hc_metric = "euclidean", k = 2, 
+                      hc_method = "centroid", graph = FALSE)
+
+fviz_dend(Beans.e.eu.cl, show_labels=FALSE, horiz = TRUE, 
+          palette = "jco",main = "Centroid linkage method")
+```
+
+```{r}
+# Dunn index
+Dunn.hc.cl <- cluster.stats(d = Beans.eu, clustering = Beans.e.eu.cl$cluster)
+cat("Dunn index: ", Dunn.hc.cl$dunn)
+# Silhouette width
+fviz_silhouette(Beans.e.eu.cl, ggtheme = theme_classic(), 
+                palette = "jco",main = "Centroid linkage method")
+cat("\nAverage silouette widith: ",Beans.e.eu.cl$silinfo$avg.width)
+```
+
+```{r}
+sil <- Beans.e.eu.cl$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+We can now perform the external validation.
+
+```{r,warning = FALSE}
+table(Beans$Class, Beans.e.eu.cl$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.cl$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates that choosing at random a cluster for each data is the same of this result.
+The Meila's index indicates an high disagreement.
+
+We can see that in this case that the Bombay's bean belongs to the cluster 2. So we can try to force the system to have 7 clusters and see the result.
+
+```{r}
+Beans.e.eu.cl7<-eclust(std.Beans, FUNcluster = "hclust", 
+                      hc_metric = "euclidean", k = 7, 
+                      hc_method = "centroid", graph = FALSE)
+
+```
+
+```{r}
+# Dunn index
+Dunn.hc.cl7 <- cluster.stats(d = Beans.eu, clustering = Beans.e.eu.cl$cluster)
+cat("Dunn index: ", Dunn.hc.cl$dunn)
+# Silhouette width
+fviz_silhouette(Beans.e.eu.cl7, ggtheme = theme_classic(), 
+                palette = "jco",main = "Centroid linkage method")
+cat("Average silouette widith: ",Beans.e.eu.cl$silinfo$avg.width)
+```
+
+```{r}
+sil <- Beans.e.eu.cl7$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+table(Beans$Class, Beans.e.eu.cl7$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.cl7$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+7 clusters doesn't change the result. Only Bombay's bean are well described.
+
+
+#### Ward's method
+.
+
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.w.e <- hclust(Beans.eu, method = "ward.D2")
+fviz_dend(Beans.hc.w.e, main = "Ward's method",
+           show_labels = FALSE)
+```
+
+```{r}
+corr.w.e <- cor(Beans.eu,cophenetic(Beans.hc.w.e))
+corr.w.e 
+```
+```{r}
+
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "euclidean" 
+             ,hc_method = "ward.D2") + 
+  geom_vline(xintercept = 6, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "euclidean"
+             ,hc_method = "ward.D2")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "euclidean" 
+             ,hc_method = "ward.D2", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+The three different method gives us three different result. It's impossible to choose one based on these three method. In this case we will use 7 clusters as the number of classes.
+
+```{r,warning = FALSE}
+Beans.e.eu.w<-eclust(std.Beans, FUNcluster = "hclust",
+                     hc_metric = "euclidean",k = 7, 
+                     hc_method = "ward.D2", graph = FALSE)
+
+fviz_dend(Beans.e.eu.w, show_labels=FALSE, horiz = TRUE,
+          palette = "jco",main = "Ward's method")
+```
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.eu.w, ggtheme = theme_classic(),
+                palette = "jco",main = "Ward's method")
+
+```
+
+```{r}
+sil <- Beans.e.eu.w$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+val.e.h.w <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical", 
+                     validation ="internal", method="ward",
+                     maxitems = 1000)
+summary(val.e.h.w)
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.eu.w$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.eu.w$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+This method is more interesting: it divides the beans in different clusters. As we can see for example 1 belongs to Barbunya and Cali, 2 belongs to Dermason, 3 bolngs to Bombay, 4 belongs to Siria, 5 belogns to Horoz, 6 is not well defined and 7 belongs to Seker.
+
+The Rand index indicates a good agreement. The Meila's is still an high value.
+
+### Manhattan distance
+Now we will use the Manhattan distance. This distance is lower subject to outlayers.
+```{r}
+Beans.ma <- dist(std.Beans, method = "manhattan")
+```
+
+#### Single linkage method
+.
+
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.s.m <- hclust(Beans.ma, method = "single")
+fviz_dend(Beans.hc.s.m, main = "Single linkage method", 
+          show_labels = FALSE)
+```
+```{r}
+corr.s.m <- cor(Beans.ma,cophenetic(Beans.hc.s.m))
+corr.s.m 
+```
+
+```{r}
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "manhattan"
+             ,hc_method = "single") + 
+  geom_vline(xintercept = 2, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "manhattan" 
+             ,hc_method = "single")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "manhattan"
+             ,hc_method = "single", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+With this method 2 is the optimal number of clusters.
+
+```{r}
+Beans.e.m.s<-eclust(std.Beans, FUNcluster = "hclust",
+                    hc_metric = "manhattan",k = 2,
+                    hc_method = "single", graph = FALSE)
+
+fviz_dend(Beans.e.m.s, show_labels=FALSE, horiz = TRUE,
+          palette = "jco",main = "Single linkage method")
+```
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.m.s, ggtheme = theme_classic(), palette = "jco",
+                main = "Single linkage method")
+```
+
+
+```{r}
+sil <- Beans.e.m.s$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+```{r,warning = FALSE}
+val.m.h.s <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical",
+                     validation ="internal", method="single",
+                     maxitems = 1000)
+summary(val.m.h.s)
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.m.s$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.m.s$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates that choosing at random a cluster for each data is the same of this result.
+The Meila's index indicates an high disagreement.
+We can see that in this case that the Bombay's bean belongs to the cluster 2. So we can try to force the system to have 7 clusters and see the result.
+
+```{r}
+Beans.e.m.s7<-eclust(std.Beans, FUNcluster = "hclust",
+                    hc_metric = "manhattan",k = 7,
+                    hc_method = "single", graph = FALSE)
+                    
+```                  
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.m.s7, ggtheme = theme_classic(), palette = "jco",
+                main = "Single linkage method")
+```
+
+
+```{r}
+sil <- Beans.e.m.s7$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+table(Beans$Class, Beans.e.m.s7$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes, 
+                             alt.clustering = Beans.e.m.s7$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+
+```
+7 clusters doesn't change the result. Only Bombay's bean are well described.
+
+#### Complete linkage mathod
+.
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.c.m <- hclust(Beans.ma, method = "complete")
+fviz_dend(Beans.hc.c.e, main = "Complete linkage method",
+          show_labels = FALSE)
+```
+```{r}
+corr.c.m <- cor(Beans.ma,cophenetic(Beans.hc.c.m))
+corr.c.m 
+```
+```{r}
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "manhattan" 
+             ,hc_method = "complete") +
+  geom_vline(xintercept = 8, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "manhattan" 
+             ,hc_method = "complete")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "manhattan"
+             ,hc_method = "complete", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+The three different method gives us three different result. It's impossible to choose one based on these three method. In this case we will use 7 clusters as the number of classes.
+
+```{r}
+Beans.e.m.c<-eclust(std.Beans, FUNcluster = "hclust", hc_metric = "manhattan",
+                    k = 7, hc_method = "complete", graph = FALSE)
+
+fviz_dend(Beans.e.m.c, show_labels=FALSE, horiz = TRUE, palette = "jco",
+          main = "Complete linkage method")
+```
+
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.m.c, ggtheme = theme_classic(), palette = "jco",
+                main = "Complete linkage method")
+```
+
+```{r}
+sil <- Beans.e.m.c$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+val.m.h.c <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical", 
+                     validation ="internal", method="complete",
+                     maxitems = 1000)
+summary(val.m.h.c)
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.m.c$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.m.c$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a middle agreement. The Meila's index indicates an high disagreement.
+
+
+#### Average linkage method
+.
+
+```{r, fig.align = "center", out.width="85%"}
+Beans.hc.a.m <- hclust(Beans.ma, method = "average")
+fviz_dend(Beans.hc.a.m, main = "Average linkage method",
+          show_labels = FALSE)
+```
+```{r}
+corr.a.m <- cor(Beans.ma,cophenetic(Beans.hc.a.m))
+corr.a.m 
+```
+```{r}
+p1 <- fviz_nbclust(std.Beans, hcut, method = "wss", hc_metric = "manhattan" 
+             ,hc_method = "average") + 
+  geom_vline(xintercept = 4, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, hcut, method = "silhouette", hc_metric = "manhattan" 
+             ,hc_method = "average")
+p3 <- fviz_nbclust(std.Beans, hcut, method = "gap_stat", hc_metric = "manhattan" 
+             ,hc_method = "average", nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+
+The three different method gives us three different result. It's impossible to choose one based on these three method. In this case we will use 7 clusters as the number of classes.
+
+```{r}
+Beans.e.m.al<-eclust(std.Beans, FUNcluster = "hclust", hc_metric = "manhattan",
+                     k = 7, hc_method = "average", graph = FALSE)
+
+fviz_dend(Beans.e.m.al, show_labels=FALSE, horiz = TRUE, palette = "jco",
+          main = "Average linkage method")
+```
+
+```{r,warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.e.m.al, ggtheme = theme_classic(), palette = "jco", 
+                main = "Average linkage method")
+```
+
+```{r}
+sil <- Beans.e.m.al$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+```{r,warning = FALSE}
+val.m.h.a <- clValid(std.Beans, nClust = 2:7, clMethods = "hierarchical",
+                     validation ="internal", method="average",
+                     maxitems = 1000)
+summary(val.m.h.a)
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.e.m.al$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.e.m.al$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a week agreement. The Meila's index indicates strong disagreement.
+
+## Partitioning clustering
+
+There are two different types: 
+
++ \textbf{K-means}: Starts from random value, but evaluates a mean center and then aggregate the clusters that are closest to it. It computational favorable respect to hierarchical clustering, but it is high sensitive to outlayers. It can be used only with numerical value.
+
++ \textbf{K-medoids}: Similar to K-means but the center now is defined by a unit. It less sensitive to outlayers and can be used also in case of categorical or logical value. 
+
+The structure of the analysis is as follow:
+ 1. Choosing the number of clusters using the WSS or average silhouette width or gap statistics or other statistics. 
+ 2. Doing the k algorithm.
+ 3. Computing the internal validation through the analysis of the silhouette width, connectivity and Dunn index.
+ 4. Computing the external validation of the data through Rand index and  Meila's index. The first measures the agreement and the second the disagreement with the Classes.
+ 5. Doing the two plots of the data in the PCA space or on the pair plot.
+### K-means
+
+First of all we need to evaluate the number of optimal cluster. In this case we will use a method that evaluate the optimal number using 24 different methods.
+
+```{r}
+nb <- NbClust(data = std.Beans, diss = Beans.eu, 
+              distance = NULL, min.nc = 2,
+              max.nc = 15, method = "kmeans")
+# Creating a dataframe
+selected_clusters<-as.data.frame(table(nb$Best.nc[1,]))
+
+# renaming all the rows and the columns
+
+colnames(selected_clusters)<-c("NumberofClusters","Frequency")
+
+# Creating the plot
+
+ggplot(selected_clusters, aes(x= `NumberofClusters`
+,y=Frequency)) +
+geom_bar(stat="identity",fill= "darkblue")+
+theme_minimal()+
+labs(title="OptimalNumberofClusters-K-means",
+x="NumberofClusters(K)",
+y="Frequencyamongallindices")
+
+```
+```{r}
+km.res <- kmeans(std.Beans,2,nstart = 50)
+km.res
+```
+As we can see only two clusters can't explain well the data. This can be seen on the value of $WSS$ that are really high and on the value of $BSS/TSS$ that is only the 40 %. We can try the second better number of clusters.
+
+```{r}
+km.res <- kmeans(std.Beans,4,nstart = 50)
+km.res
+```
+This give us a better representation of the data. Let us see the representation on the biplot.
+```{r}
+cl <- km.res$cluster
+pairs(std.Beans, gap = 0, pch = cl ,col =c("black","darkblue","darkred","pink") )
+```
+
+We can now do the internal clustering validation.
+
+```{r,warning = FALSE}
+Beans.km<-eclust(std.Beans, FUNcluster = "kmeans",k = 4, graph = FALSE)
+
+
+# Silhouette width
+fviz_silhouette(Beans.km, ggtheme = theme_classic(), palette = "jco", 
+                main = "Kmeans")
+                
+```
+
+```{r}
+sil <- Beans.km$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+```{r,warning = FALSE}
+val.km <- clValid(std.Beans, nClust = 2:7, clMethods = "kmeans",
+                  validation ="internal", maxitems = 1000)
+summary(val.km)
+
+```
+
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.km$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.km$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a middle agreement. The Meila's index indicates an high disagreement.
+
+We can try to force the system to have 7 clsuters.
+
+
+```{r}
+Beans.km7<-eclust(std.Beans, FUNcluster = "kmeans",k = 7, graph = FALSE)
+```
+
+```{r}
+# Silhouette width
+fviz_silhouette(Beans.km7, ggtheme = theme_classic(), palette = "jco", 
+                main = "Kmeans")
+                
+```
+
+```{r}
+sil <- Beans.km7$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+
+```{r,warning = FALSE}
+table(Beans$Class, Beans.km7$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.km7$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a middle agreement. The Meila's index indicates an high disagreement.
+We can project all in the two frist PC.
+
+```{r}
+fviz_cluster(Beans.km,data = std.Beans, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal(), 
+             main = "K-means in the first 2 PC for 4 clusters")
+```
+```{r}
+fviz_cluster(Beans.km7,data = std.Beans, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal(), 
+             main = "K-means in the first 2 PC for 7 clusters")
+```
+
+
+### K-medoids
+
+Now we compute the K-medoids. First of all we need the number of clusters usign the euclidean distance.
+```{r}
+p1 <- fviz_nbclust(std.Beans, pam, method = "wss", metric = "euclidean" ) + 
+  geom_vline(xintercept = 5, linetype = 2)
+p2 <- fviz_nbclust(std.Beans, pam, method = "silhouette", metric = "euclidean")
+p3 <- fviz_nbclust(std.Beans, pam, method = "gap_stat", metric = "euclidean" 
+            , nboot = 50)
+grid.arrange(p1, p2, p3, ncol = 2, nrow = 2)
+```
+All the methods give us a different result. So we will try with 5 cluster, because this is not a so high number like 9 or a low number like 2.
+
+
+```{r}
+pam.res <- pam(std.Beans,5,metric="euclidean")
+cl <- pam.res$clustering
+pairs(std.Beans,gap = 0, pch = cl, col=c("darkred","blue","black","green","brown"))
+```
+
+We can now do the internal clustering validation.
+
+```{r,warning = FALSE}
+Beans.kmd<-eclust(std.Beans, FUNcluster = "pam",k = 5, graph = FALSE)
+
+
+# Silhouette width
+fviz_silhouette(Beans.kmd, ggtheme = theme_classic(), palette = "jco",
+                main = "Kmedoids")
+                
+                
+```
+    
+```{r}
+sil <- Beans.kmd$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+val.PCA.kmd <- clValid(std.Beans, nClust = 2:7, clMethods = "pam", 
+                       validation ="internal", 
+                       maxitems = 1000)
+summary(val.PCA.kmd)
+
+```
+
+We can now perform the external validation.
+
+```{r}
+table(Beans$Class, Beans.kmd$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.kmd$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates a middle agreement. The Meila's index indicates an high disagreement (but the est encountered until now).
+
+We can try to force the system to have 7 clusters.
+
+```{r}
+Beans.kmd7<-eclust(std.Beans, FUNcluster = "pam",k = 7, graph = FALSE)
+```
+
+```{r, warning = FALSE}
+# Silhouette width
+fviz_silhouette(Beans.kmd7, ggtheme = theme_classic(), palette = "jco",
+                main = "Kmedoids")
+                
+                
+```
+    
+```{r}
+sil <- Beans.kmd7$silinfo$widths[,1:3]
+
+clusters <- unique(sil[,"cluster"])
+for (i in clusters){
+  neg.sil <- which(sil[,"sil_width"]<0 & sil[,"cluster"] == i)
+  cat("Number of misassigned units for cluster",i,": ",
+      nrow(sil[neg.sil, , drop = FALSE]),"\n")
+}
+```
+
+```{r,warning = FALSE}
+table(Beans$Class, Beans.kmd7$cluster)
+
+clust_stats <- cluster.stats(d = Beans.eu,clustering = classes,
+                             alt.clustering = Beans.kmd7$cluster )
+
+cat("Rand index: ", clust_stats$corrected.rand)
+
+cat("Meila's VI index: ", clust_stats$vi)
+```
+The Rand index indicates an high agreement. The Meila's index indicates an high disagreement.
+We can project in the first two PC to see a better graphically representation.
+
+```{r}
+fviz_cluster(Beans.kmd,data = std.Beans, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal(), 
+             main = "K-medodids in the first 2 PC for 5 clusters")
+```
+```{r}
+fviz_cluster(Beans.kmd7,data = std.Beans, geom = "point", ellipse.type = "norm",
+             ggtheme = theme_minimal(), 
+             main = "K-medodids in the first 2 PC for 7 clusters")
+```
+
+## Stability measure
+
+This section is useful to compare different algorithms and choose the best one. This contains four different indices:
+
++ The \textbf{APN(Average proportion of non-overlap)}: measures the average proportion of observation not placed in the same cluster by clustering based on the full data and clustering based on the data with a single column removed.
+
++ The \textbf{AD(Average distance)}: measures the average distance between observations placed in the same cluster under both cases (full data and data without one column).
+
++ The \textbf{ADM(Average distance between means)} : measures the average distance between cluster centers for observations placed in the same cluster under both cases.
+
++ The \textbf{FOM(Figure of merit)}: measure the average intra-cluster variance of the deleted column, where the clustering is based on the remaining (undeleted) columns.
+
+In our case we will compare each hierarchical clustering procedure with kmeans and pam algorithm.
+
+```{r,warning=FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.e.s <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                   metric = "euclidean" ,validation = "stability", 
+                   method = "single", maxitems = 1000)
+
+summary(val.e.s)
+```
+```{r,warning=FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.e.c <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                   metric = "euclidean" ,validation = "stability",
+                   method = "complete", maxitems = 1000)
+
+summary(val.e.c)
+```
+
+```{r,warning=FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.e.al <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                    metric = "euclidean" ,validation = "stability",
+                    method = "average", maxitems = 1000)
+
+summary(val.e.al)
+```
+
+```{r,results = 'hide', message = FALSE, warning = FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.e.w <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                   metric = "euclidean" ,validation = "stability",
+                   method = "ward", maxitems = 1000)
+```
+```{r}
+summary(val.e.w)
+```
+
+
+```{r,warning=FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.m.s <- clValid(std.Beans,nClust = 2:7,
+                   clMethods = clmethods, metric = "manhattan" ,
+                   validation = "stability", method = "single", maxitems = 1000)
+
+summary(val.m.s)
+```
+
+
+```{r,warning=FALSE}
+clmethod <- c("hierarchical","kmeans","pam")
+val.m.c <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                   metric = "manhattan" ,validation = "stability",
+                   method = "complete", maxitems = 1000)
+
+summary(val.m.c)
+```
+
+
+```{r,warning=FALSE}
+clmethods <- c("hierarchical","kmeans","pam")
+val.m.al <- clValid(std.Beans,nClust = 2:7,clMethods = clmethods,
+                    metric = "manhattan" ,validation = "stability",
+                    method = "average", maxitems = 1000)
+
+summary(val.m.al)
+```
+
+
+We can see that in general for APN and ADM the algorithms indicates the hierarchical as the best clustering method with 2 or 3 clusters. Instead the AD and FOM in the majority of cases indicates the pam algorithm as the best in the case of high number of clusters, in general 6 or 7 clusters.
+
+# Fuzzy Clustering (Fuzzy K-means)
+
+In this section we analysis the data trough the lent of the fuzzy clustering. 
+This type of clustering is a soft clustering approach, this means that each unit in the data doesn't belongs to only one cluster, but for each cluster it has a certain probability to belong to it.
+First of all we need to derive the optimal number of clusters this is done by comparing two indices:
+
++ \textbf{fuzzy silhouette(FS)}: with this index the optimal value of K corresponds to the maximum of the index.
+
++ \textbf{Xien and Beni index (XB)}: with this index the optimal value of K is obtained by minimizing the index.
+
+Then we choose the best index between the two chosen. 
+Then we report the centroids and then compare the data with the external value.
+At the end we plot on the pair plot and on the space spanned by the two first PCs.
+
+## Algorithms
+
+```{r}
+Beans.FKM.SIL <- FKM(X = Beans.w.c,k = 2:8 ,RS = 10, stand = 1)
+
+Beans.FKM.SIL$criterion
+
+Beans.FKM.SIL$k
+
+```
+
+```{r}
+Beans.FKM.XB <- FKM(X = Beans.w.c,k = 2:8 ,RS = 10, index = "XB",stand = 1)
+
+Beans.FKM.XB$criterion
+
+Beans.FKM.XB$k
+
+
+```
+In both the situations the algorithm give us only 2 clusters, this means that it can't recognize the differences between the units based on the geometrical characteristics.
+The only thing that we can see is that in both cases the second best value for FS and XB is 5 clusters. We can try with that and then force the system to have 7 clusters.
+
+```{r}
+Beans.FKM5 <- FKM(X = Beans.w.c,k = 5 ,RS = 10,stand = 1)
+Beans.FKM7 <- FKM(X = Beans.w.c,k = 7 ,RS = 10,stand = 1)
+```
+
+## Clusters and centroids
+
+```{r}
+cl.size(Beans.FKM.SIL$U)
+cl.size(Beans.FKM.XB$U)
+cl.size(Beans.FKM5$U)
+cl.size(Beans.FKM7$U)
+```
+
+Each unit is assigned to a cluster according to the maximum membership degree getting to so-called closest hard clustering partition.
+We can see that for FS algorithm e XB algorithm the result is the same.
+
+```{r}
+Hraw(Beans.FKM.SIL$X,Beans.FKM.SIL$H)
+Hraw(Beans.FKM.XB$X,Beans.FKM.XB$H)
+Hraw(Beans.FKM5$X,Beans.FKM5$H)
+Hraw(Beans.FKM7$X,Beans.FKM7$H)
+```
+
+Forcing now the units to be an hard partitioning cluster, we can compare the data with the given classes.
+```{r}
+table(Beans$Class,Beans.FKM.SIL$clus[,1])
+```
+```{r}
+table(Beans$Class,Beans.FKM.XB$clus[,1])
+```
+
+```{r}
+table(Beans$Class,Beans.FKM5$clus[,1])
+```
+```{r}
+table(Beans$Class,Beans.FKM7$clus[,1])
+```
+
+For 2 clusters the 7 classes are divided in two. Instead for 5 or 7 clusters we can see a better identification of each class for each cluster.
+
+## Plots
+
+```{r}
+pairs(std.Beans, col = Beans.FKM.SIL$clus[,1], pch = 16, cex = 0.8 , gap = 0, main = "Clustering for FS")
+
+```
+```{r}
+plot.fclust(x = Beans.FKM.SIL, pca = TRUE, main = "Clustering for FS")
+```
+
+
+```{r}
+pairs(std.Beans, col = Beans.FKM.XB$clus[,1], pch = 16, cex = 0.8 , gap = 0)
+```
+```{r}
+plot.fclust(x = Beans.FKM.XB, pca = TRUE)
+```
+
+
+
+```{r}
+pairs(std.Beans, col = Beans.FKM5$clus[,1], pch = 16, cex = 0.8 , gap = 0)
+```
+```{r}
+plot.fclust(x = Beans.FKM5, pca = TRUE)
+```
+
+
+
+```{r}
+pairs(std.Beans, col = Beans.FKM7$clus[,1], pch = 16, cex = 0.8 , gap = 0)
+```
+```{r}
+plot.fclust(x = Beans.FKM7, pca = TRUE)
+```
+Comparing all the plots we can see that only 2 clusters have too much parsimony. In the case of 5 or 7 is better, but in the case of 7 the different clusters overlap.
+
+# Model based Clustering 
+
+One limitation of traditional clustering methods, such as hierarchical and partitioning algorithms, is that
+they rely on heuristic procedures and lack a formal statistical framework. As a result, these approaches do
+not support formal inference. A more principled alternative is model-based clustering, which assumes that
+the data are generated from a mixture of underlying probability distributions—one for each cluster. Each
+cluster is described by a specific probability density (or mass) function and is associated with a weight in the mixture. Unlike traditional methods, model-based clustering uses a soft assignment approach, meaning that each data point is assigned a probability of belonging to each cluster, rather than being definitively allocated to just one.
+
+```{r, warning  = FALSE}
+Mbc <- Mclust(std.Beans)
+fviz_mclust(Mbc, "BIC", palette("jco"))
+```
+```{r}
+summary(Mbc)
+```
+We can see that in this case the best model is a Gaussian mixture model with varying volume, shape and orientation. It identify 8 clusters and  the $BIC = 27777.41$.
+We can compare the three best BIC.
+
+```{r}
+summary(Mbc$BIC)
+```
+
+We can notice that for the VVV with 7 clusters the value of BIC is slightly lower.
+From now on we choose the configuration with 8 clusters instead of 7.
+We now compare the 8 clusters with the 7 clusters already present in the data.
+
+```{r}
+table(Beans$Class,Mbc$classification)
+```
+We can see that:
+
+ + \textbf{Barbunya} in majority belongs to two clusters: the 1st and the 6th. 
+ + \textbf{Bombay} is the only one clustered well in the 3rd.
+ + \textbf{Cali} in majority belongs to the 1st cluster, but we have values on 6th and 8th.
+ + \textbf{Dermason} in majority belongs to the 2nd clusters.
+ + \textbf{Horzo} in majority belongs to the 5th cluster, but we have a great number of them inside the 8th cluster.
+ + \textbf{Seker} in majority belongs to the 7th cluster.
+ + \textbf{Sira} in majority belongs to the 4th cluster.
+
+```{r}
+adjustedRandIndex(Beans$Class, Mbc$classification)
+```
+The rand index indicates an high agreement between the clustering proposed by the Model based clustering and the original classes. We can see it from the above table.
+We can now plot the values on the biplot and the space spanned by the two first PCs.
+
+```{r}
+pairs(std.Beans, gap = 0, pch = 16, col = Mbc$classification)
+```
+```{r}
+fviz_mclust(Mbc, "uncertainty", palette="jco")
+```
+The figure displays the cluster structure estimated via model-based clustering, projected onto the first two principal components. The shape and orientation of each ellipse reflect the underlying Gaussian component. The point size represents the uncertainty of the assignment: smaller points indicate higher classification ambiguity. Eight distinct clusters were identified, as suggested by the highest BIC value.
+
+# Conclusion 
+
+The analysis underling a difficulty for the most heuristic models to predict the right number of clusters. The geometrical factor, with these algorithms, are not sufficient to underling differences between the units. Probably as we can see in the space spanned by the first two PCs the algorithm has difficulty in separating that classes of beans in which the geometrical property are the same, but they are different type of beans. For example Bombay is the only one cluster that frequently is always represented well without misleading assignment to other clusters for their units. The only one method that give a similar number of clusters is the Model based approach. The rand index in this case is grater then all the others.
